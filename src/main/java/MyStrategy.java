@@ -3,8 +3,10 @@ import model.*;
 import java.util.*;
 
 public final class MyStrategy implements Strategy {
-    private static final double WAYPOINT_RADIUS = 100.0D;
+    private static final double CURRENT_VERSION = 1.01;
+    private static final LoggingMod logging_mod = LoggingMod.DEBUG;
 
+    private static final double WAYPOINT_RADIUS = 100.0D;
     private static final double LOW_HP_FACTOR = 0.25D;
 
     /**
@@ -46,6 +48,7 @@ public final class MyStrategy implements Strategy {
         // Если осталось мало жизненной энергии, отступаем к предыдущей ключевой точке на линии.
         if (self.getLife() < self.getMaxLife() * LOW_HP_FACTOR) {
             goTo(getPreviousWaypoint());
+            log("Пошли полечиться");
             return;
         }
 
@@ -55,8 +58,8 @@ public final class MyStrategy implements Strategy {
         if (nearestTarget != null) {
             double distance = self.getDistanceTo(nearestTarget);
 
-            // ... и он в пределах досягаемости наших заклинаний, ...
-            if (distance <= self.getCastRange()) {
+            // ... и он в пределах досягаемости наших заклинаний, ... и между нами есть дружественный моб
+            if (distance <= self.getCastRange() && hasFriendlyMobBetweenMeAndTarget(nearestTarget)) {
                 double angle = self.getAngleTo(nearestTarget);
 
                 // ... то поворачиваемся к цели.
@@ -69,13 +72,22 @@ public final class MyStrategy implements Strategy {
                     move.setCastAngle(angle);
                     move.setMinCastDistance(distance - nearestTarget.getRadius() + game.getMagicMissileRadius());
                 }
-
+                log("Атакуем!");
                 return;
             }
         }
         // Если нет других действий, просто продвигаемся вперёд.
+        LivingUnit nearestMob = getNearestFriendlyUnit();
+
+        if (nearestMob != null) {
+            goTo(getPositionBehind(nearestMob, 50));
+            log("Фоловим моба");
+            return;
+        }
         goTo(getNextWaypoint());
+        log("Идем к вейпоинту");
     }
+
 
     /**
      * Инциализируем стратегию.
@@ -222,6 +234,10 @@ public final class MyStrategy implements Strategy {
     /**
      * Простейший способ перемещения волшебника.
      */
+    private void goTo(LivingUnit unit) {
+        goTo(new Point2D(unit.getX(), unit.getY()));
+    }
+
     private void goTo(Point2D point) {
         double angle = self.getAngleTo(point.getX(), point.getY());
 
@@ -260,6 +276,54 @@ public final class MyStrategy implements Strategy {
         return nearestTarget;
     }
 
+    /* Получает ближайшего моба */
+    private LivingUnit getNearestFriendlyUnit() {
+        List<LivingUnit> mobs = new ArrayList<>();
+        mobs.addAll(Arrays.asList(world.getMinions()));
+        LivingUnit nearestFriendlyMob = null;
+        double nearestFriendlyMobDistance = Double.MAX_VALUE;
+        for (LivingUnit mob : mobs) {
+            if (mob.getFaction() != self.getFaction()) {
+                continue;
+            }
+            double distance = self.getDistanceTo(mob);
+
+            if (distance < nearestFriendlyMobDistance) {
+                nearestFriendlyMob = mob;
+                nearestFriendlyMobDistance = distance;
+            }
+        }
+        return nearestFriendlyMob;
+    }
+
+    /* Проверка есть ли дружественные мобы между тобой и целью */
+    private boolean hasFriendlyMobBetweenMeAndTarget(LivingUnit target) {
+        double distance = self.getDistanceTo(target);
+        return Arrays.stream(world.getMinions()).filter(minion -> minion.getFaction() == self.getFaction())
+                .filter(minion -> (minion.getDistanceTo(self) < distance && minion.getDistanceTo(target) < distance)).count() > 0;
+    }
+
+
+    /* Получить позицию за мобом */
+    private Point2D getPositionBehind(LivingUnit unit, double d) {
+        double angle = Math.toDegrees(unit.getAngle());
+        if (angle < 0) angle += 360;
+        if (0 <= angle && angle < 90) {
+            return new Point2D(unit.getX() - d, unit.getY() - d);
+        }
+        if (90 <= angle && angle < 180) {
+            return new Point2D(unit.getX() + d, unit.getY() - d);
+        }
+        if (180 <= angle && angle < 270) {
+            return new Point2D(unit.getX() + d, unit.getY() + d);
+        }
+        if (270 <= angle && angle < 360) {
+            return new Point2D(unit.getX() - d, unit.getY() + d);
+        }
+        return new Point2D(unit.getX(), unit.getY());
+    }
+
+
     /**
      * Вспомогательный класс для хранения позиций на карте.
      */
@@ -291,5 +355,15 @@ public final class MyStrategy implements Strategy {
         public double getDistanceTo(Unit unit) {
             return getDistanceTo(unit.getX(), unit.getY());
         }
+    }
+
+    private void log(String msg) {
+        if (logging_mod == LoggingMod.DEBUG) {
+            System.out.println(world.getTickIndex() + ": " + msg);
+        }
+    }
+
+    private enum LoggingMod {
+        DEBUG, PROD
     }
 }
